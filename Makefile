@@ -4,6 +4,8 @@ TESTS:=$(subst /,,$(dir $(SUBMAKEFILES)))
 RESULTS:=$(addsuffix .log,$(addprefix result/,$(TESTS)))
 PWD=$(shell pwd)
 
+export CC
+
 all: result.log
 	@echo "=========================Test Report========================="
 	@cat $< | grep --color=auto 'FAIL\|$$'
