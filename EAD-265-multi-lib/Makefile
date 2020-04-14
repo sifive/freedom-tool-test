@@ -10,4 +10,4 @@ all: $(TARGET)
 	test.c
 
 clean:
-	rm $(TARGET) *.log -f
+	rm $(TARGET) a.out -f
