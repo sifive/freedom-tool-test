@@ -3,6 +3,7 @@ SUBMAKEFILES:=$(wildcard */Makefile)
 TESTS:=$(subst /,,$(dir $(SUBMAKEFILES)))
 RESULTS:=$(addsuffix .log,$(addprefix result/,$(TESTS)))
 PWD=$(shell pwd)
+SED?=sed
 
 export CC
 
@@ -12,7 +13,7 @@ all: result.log
 	@if grep -q FAIL $<; then exit 1; fi
 
 result.log: $(RESULTS)
-	sed -s '$G' $(RESULTS) > $@
+	$(SED) -s '$G' $(RESULTS) > $@
 	echo "" >> $@
 
 result/%.log:
