@@ -1,4 +1,4 @@
-CC:=riscv64-unknown-elf-gcc
+CC?=riscv64-unknown-elf-gcc
 SUBMAKEFILES:=$(wildcard */Makefile)
 TESTS:=$(subst /,,$(dir $(SUBMAKEFILES)))
 RESULTS:=$(addsuffix .log,$(addprefix result/,$(TESTS)))
