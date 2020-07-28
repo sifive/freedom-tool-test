@@ -36,7 +36,7 @@ and `clean:`:
 
 - Default make rule must run the testcase and return code is non zero if any error,
   otherwise return 0, and *DO NOT* use `riscv64-unknown-elf-gcc` as compiler directly,
-  use `$(CC)` is prefered.
+  use `$(CC)` is prefered, and use `$(OBJDUMP)` rather than `riscv64-unknown-elf-objdump`.
 
 - Clean rule must clean up all temporary file created during testing, and no
   error even not run test before clean, e.g. add `-f` option to `rm` to prevent

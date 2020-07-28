@@ -1,4 +1,5 @@
 CC?=riscv64-unknown-elf-gcc
+OBJDUMP?=$(patsubst %gcc,%objdump,$(CC))
 SUBMAKEFILES:=$(wildcard */Makefile)
 TESTS:=$(subst /,,$(dir $(SUBMAKEFILES)))
 RESULTS:=$(addsuffix .log,$(addprefix result/,$(TESTS)))
@@ -6,6 +7,7 @@ PWD=$(shell pwd)
 SED?=sed
 
 export CC
+export OBJDUMP
 
 all: result.log
 	@echo "=========================Test Report========================="
