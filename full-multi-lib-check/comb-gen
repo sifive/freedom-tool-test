@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+
+from __future__ import print_function
+import itertools
+import sys
+
+ABI = [
+  'ilp32e',
+  'ilp32', 'ilp32f', 'ilp32d',
+  'lp64', 'lp64f', 'lp64d',
+]
+
+BASEISA = [
+  'rv32i', 'rv32e',
+  'rv64i',
+]
+
+EXTS = [
+  'm', 'a', 'f', 'd', 'c',
+  'zfh',
+  'v', 'zvqmac', 'zvamo', 'zvlsseg',
+]
+
+canonical_order = "mafdgqlcbjtpvn"
+LONG_EXT_PREFIXES = ['z', 's', 'h', 'x']
+
+def parse_arch(arch):
+  arch_list = []
+  # Assume arch already in canonical order
+  idx = 4
+  arch_list.append(arch[4])
+  while idx < len(arch):
+    if arch[idx] in canonical_order:
+      arch_list.append(arch[idx])
+    if arch[idx] == '_':
+      break
+    idx += 1
+
+  # Filter out empty string.
+  arch_list += list(filter(lambda x:len(x) != 0, arch[idx:].split("_")))
+
+  return arch_list
+
+def valid_arch_abi_comb(arch, abi):
+  arch_list = parse_arch(arch)
+  # Assume EXTS is already handled implied and dep checking.
+
+  # We don't support this combination on gnu toolchain yet.
+  if arch.startswith('rv32e') and ('f' in arch_list or 'd' in arch_list):
+    return False
+
+  # rv32e require ilp32e
+  if arch.startswith('rv32e') and abi != 'ilp32e':
+    return False
+
+  # ilp32e require rv32e too
+  if abi == 'ilp32e' and not arch.startswith('rv32e'):
+    return False
+
+  # 64 bits abi require 64 bit arch.
+  if abi.startswith('lp64') and not arch.startswith('rv64'):
+    return False
+
+  # 32 bits abi require 32 bit arch.
+  if abi.startswith('ilp32') and not arch.startswith('rv32'):
+    return False
+
+  # f abi require f
+  if abi.endswith('f') and ('f' not in arch_list) and \
+     ('d' not in arch_list) and ('g' not in arch_list):
+    return False
+
+  # d abi require d
+  if abi.endswith('d') and ('d' not in arch_list) and ('g' not in arch_list):
+    return False
+
+  return True
+
+#
+# IMPLIED_EXT(ext) -> implied extension list.
+#
+IMPLIED_EXT = {
+  "d" : ["f"],
+  # XXX: Not sure ZFH is implied F or not, because the spec is not clear,
+  #      but add it could prevent invalid combination.
+  "zfh" : ["f"],
+  # XXX: WORK-AROUND for v = zvbase + zvlsseg + zvamo.
+  #      We don't have formal name for zvbase yet, so just add zvlsseg and zvamo
+  #      to implied list for resolve multi-lib issue.
+  "v"   : ['zvlsseg', 'zvamo'],
+  "zvlsseg"  : ['v', 'zvlsseg', 'zvamo'],
+  "zvamo"  : ['v', 'zvlsseg', 'zvamo'],
+  # XXX: WORK-AROUND for zvqmac, zvqmac need v, which mean we also implied
+  #      zvlsseg and zvamo
+  "zvqmac"   : ['v', 'zvlsseg', 'zvamo'],
+}
+
+
+def arch_canonicalize(arch):
+  # TODO: Support extension version.
+  new_arch = ""
+  if arch[:5] in ['rv32e', 'rv32i', 'rv32g', 'rv64i', 'rv64g']:
+    # TODO: We should expand g to imad_zifencei once we support newer spec.
+    new_arch = arch[:5].replace("g", "imafd")
+  else:
+    raise Exception("Unexpected arch: `%s`" % arch[:5])
+
+  # Find any Z, S, H or X
+  long_ext_prefixes_idx = map(lambda x: arch.find(x), LONG_EXT_PREFIXES)
+
+  # Filter out any non-existent index.
+  long_ext_prefixes_idx = list(filter(lambda x: x != -1, long_ext_prefixes_idx))
+  if long_ext_prefixes_idx:
+    first_long_ext_idx = min(long_ext_prefixes_idx)
+    long_exts = arch[first_long_ext_idx:].split("_")
+    std_exts = list(arch[5:first_long_ext_idx])
+  else:
+    long_exts = []
+    std_exts = list(arch[5:])
+
+  #
+  # Handle implied extensions.
+  #
+  for ext in std_exts + long_exts:
+    if ext in IMPLIED_EXT:
+      implied_exts = IMPLIED_EXT[ext]
+      for implied_ext in implied_exts:
+        if implied_ext not in std_exts + long_exts:
+          long_exts.append(implied_ext)
+
+  # Single letter extension might appear in the long_exts list,
+  # becasue we just append extensions list to the arch string.
+  std_exts += list(filter(lambda x:len(x) == 1, long_exts))
+
+  # Multi-letter extension must be in lexicographic order.
+  long_exts = list(sorted(filter(lambda x:len(x) != 1, long_exts)))
+
+  # Put extensions in canonical order.
+  for ext in canonical_order:
+    if ext in std_exts:
+      new_arch += ext
+
+  # Check every extension is processed.
+  for ext in std_exts:
+    if ext == '_':
+      continue
+    if ext not in canonical_order:
+      raise Exception("Unsupported extension `%s`" % ext)
+
+  # Concat rest of the multi-char extensions.
+  if long_exts:
+    new_arch += "_" + "_".join(long_exts)
+  return new_arch
+
+def _expand_combination(ext):
+  exts = list(ext.split("*"))
+
+  # No need to expand if there is no `*`.
+  if len(exts) == 1:
+    return [(exts[0],)]
+
+  # Add underline as prefix to multi-char extension.
+  # e.g.
+  #  b * zvamo => b * _zvamo
+  exts = list(map(add_underline_prefix, exts))
+
+  # Generate combination!
+  ext_combs = []
+  for comb_len in range(1, len(exts)+1):
+    for ext_comb in itertools.combinations(exts, comb_len):
+      ext_combs.append(ext_comb)
+
+  return ext_combs
+
+def unique(x):
+  #
+  # Drop duplicated entry.
+  # Convert list to set and then convert back to list.
+  #
+  # Add sorted to prevent non-deterministic results in different env.
+  #
+  return sorted(list(set(x)))
+
+ALTERNATIVE_RULES = [
+  # (cond, replace rule)
+  (lambda arch : "imafd" in arch,
+   lambda arch:arch.replace("imafd", "g")),
+  (lambda arch : "fd" in arch,
+   lambda arch:arch.replace("fd", "d")),
+
+  (lambda arch : "_zvamo" in arch,
+   lambda arch:arch.replace("_zvamo", "")),
+  (lambda arch : "_zvlsseg" in arch,
+   lambda arch:arch.replace("_zvlsseg", "")),
+]
+
+def _alternative_combs(alt_combs, arch, abi, idx):
+  if idx < len(ALTERNATIVE_RULES):
+    if (ALTERNATIVE_RULES[idx][0](arch)):
+      alt_arch = ALTERNATIVE_RULES[idx][1](arch)
+      _alternative_combs(alt_combs, alt_arch,abi, idx + 1)
+    _alternative_combs(alt_combs, arch, abi, idx + 1)
+  else:
+    alt_combs.add("%s-%s" % (arch, abi))
+
+def alternative_combs(arch, abi):
+  alt_combs = set()
+  _alternative_combs (alt_combs, arch, abi, 0)
+  return alt_combs
+
+def comb_gen():
+  combs = set()
+  for abi in ABI:
+    for baseisa in BASEISA:
+      ext_combs = []
+      for comb_len in range(1, len(EXTS)+1):
+        for ext_comb in itertools.combinations(EXTS, comb_len):
+          arch = baseisa + "_".join(ext_comb)
+          arch = arch_canonicalize(arch)
+          if valid_arch_abi_comb(arch, abi):
+            combs.add("%s-%s" % (arch, abi))
+            combs = combs.union(alternative_combs(arch, abi))
+  for comb in sorted(list(combs)):
+    print (comb,)
+
+if __name__ == '__main__':
+  if len(sys.argv) == 1:
+    comb_gen()
+  else:
+    for arg in sys.argv[1:]:
+      arch, abi = arg.split('-')
+      if not valid_arch_abi_comb(arch, abi):
+        print ("%s %s is invalid combination." %(arch, abi))
